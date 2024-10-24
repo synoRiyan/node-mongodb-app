@@ -1,80 +1,47 @@
 pipeline {
-    agent any
-
-    environment {
-        // Define any required environment variables here
-        DOCKER_IMAGE = "node-mongo-sample-app"
-        MONGO_IMAGE = "mongo:latest"
+    agent {
+        docker {
+            image 'node:18' // You can change to a Node.js version you prefer
+            args '-v /var/run/docker.sock:/var/run/docker.sock' // Bind mount Docker socket
+        }
     }
-
+    environment {
+        // Defining MongoDB container
+        MONGO_CONTAINER = 'mongo:5' // Change to MongoDB version if needed
+        GIT_URL = 'https://github.com/synoRiyan/node-mongodb-app.git'
+        BRANCH_NAME = 'main' // Change if your default branch is not main
+    }
     stages {
-        stage('Checkout Code') {
+        stage('Checkout') {
             steps {
-                // Checkout your code from the repository
-                git 'https://github.com/synoRiyan/node-mongodb-app.git'
+                git url: "${env.GIT_URL}", branch: "${env.BRANCH_NAME}"
             }
         }
-
-        stage('Build Docker Images') {
+        stage('Setup MongoDB') {
             steps {
                 script {
-                    // Build the Node.js Docker image
-                    docker.build(DOCKER_IMAGE)
-                }
-            }
-        }
-
-        stage('Run MongoDB') {
-            steps {
-                script {
-                    // Pull and run MongoDB container
-                    docker.image(MONGO_IMAGE).run('-d --name mongodb-container -p 27017:27017')
-                }
-            }
-        }
-
-        stage('Run Node.js App') {
-            steps {
-                script {
-                    // Run Node.js app container with MongoDB link
-                    docker.image(DOCKER_IMAGE).run('-d --name node-app-container --link mongodb-container:mongo -p 3000:3000')
-                }
-            }
-        }
-
-        stage('Run Tests') {
-            steps {
-                script {
-                    // Run tests inside the Node.js container
-                    docker.image(DOCKER_IMAGE).inside {
-                        sh 'npm install'
-                        sh 'npm test'
+                    docker.image(env.MONGO_CONTAINER).withRun('-p 27017:27017 --name mongodb') { c ->
+                        echo "MongoDB container started with ID: ${c.id}"
+                        sleep 10 // Wait for MongoDB to initialize
                     }
                 }
             }
         }
-
-        stage('Cleanup') {
+        stage('Install Dependencies') {
             steps {
-                script {
-                    // Stop and remove containers after tests
-                    sh 'docker stop node-app-container mongodb-container'
-                    sh 'docker rm node-app-container mongodb-container'
-                }
+                sh 'npm install'
+            }
+        }
+        stage('Run Tests') {
+            steps {
+                sh 'npm test'
             }
         }
     }
-
     post {
         always {
-            // Clean up the workspace
-            cleanWs()
-        }
-        success {
-            echo "Build and tests were successful!"
-        }
-        failure {
-            echo "Build or tests failed!"
+            echo 'Cleaning up...'
+            sh 'docker rm -f mongodb' // Stop and remove MongoDB container after build
         }
     }
 }
